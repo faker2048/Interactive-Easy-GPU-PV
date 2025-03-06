@@ -3517,23 +3517,77 @@ function Get-WindowsCompatibleOS {
 #========================================================================
 
 #========================================================================
-function Get-HyperVEnabled {
-    if ((Get-WindowsOptionalFeature -Online | Where-Object FeatureName -Like 'Microsoft-Hyper-V-All') -or (Get-WindowsOptionalFeature -Online | Where-Object FeatureName -Like 'Microsoft-Hyper-V-Online')) {
-        return $true
+Function Get-HyperVEnabled {
+Write-Host "Starting to check if Hyper-V is enabled..." -ForegroundColor Cyan
+try {
+    # 使用更简单的方法检查Hyper-V是否启用
+    $hyperv = Get-Service -Name vmms -ErrorAction SilentlyContinue
+    if ($hyperv -and $hyperv.Status -eq 'Running') {
+        Write-Host "Hyper-V service is running" -ForegroundColor Cyan
+        Write-Host "Completed checking if Hyper-V is enabled" -ForegroundColor Cyan
+        Return $true
     } else {
-        Write-Warning "You need to enable Virtualisation in your motherboard and then add the Hyper-V Windows Feature and reboot"
-        return $false
+        # 尝试检查注册表
+        $hyperVKey = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Virtualization' -ErrorAction SilentlyContinue
+        if ($hyperVKey) {
+            Write-Host "Hyper-V is installed but service may not be running" -ForegroundColor Yellow
+            Write-Host "Completed checking if Hyper-V is enabled" -ForegroundColor Cyan
+            Return $true
+        } else {
+            Write-Warning "Hyper-V service is not running and Hyper-V is not installed"
+            Write-Warning "You need to enable Virtualisation in your motherboard and then add the Hyper-V Windows Feature and reboot"
+            Write-Host "Completed checking if Hyper-V is enabled" -ForegroundColor Cyan
+            Return $false
+        }
     }
+} catch {
+    Write-Warning "Error checking Hyper-V: $_"
+    Write-Host "Completed checking if Hyper-V is enabled (with error)" -ForegroundColor Cyan
+    Return $false
+}
 }
 #========================================================================
 
 #========================================================================
-function Get-WSLEnabled {
-    if ((wsl -l -v)[2].length -gt 1 ) {
-        Write-Warning "WSL is Enabled. This may interferre with GPU-P and produce an error 43 in the VM"
-        return $true
-    } else {
-        return $false
+Function Get-WSLEnabled {
+    Write-Host "Starting to check if WSL is enabled..." -ForegroundColor Cyan
+    try {
+        # 使用更可靠的方法检查WSL
+        $wslCommand = Get-Command wsl -ErrorAction SilentlyContinue
+        if (-not $wslCommand) {
+            Write-Host "WSL command not available, WSL may not be installed" -ForegroundColor Cyan
+            Write-Host "Completed checking if WSL is enabled" -ForegroundColor Cyan
+            Return $false
+        }
+        
+        # 设置超时，防止wsl命令卡住
+        $job = Start-Job -ScriptBlock { wsl -l -v }
+        $completed = Wait-Job $job -Timeout 5
+        
+        if (-not $completed) {
+            Stop-Job $job
+            Remove-Job $job -Force
+            Write-Warning "WSL command execution timed out"
+            Write-Host "Completed checking if WSL is enabled (timeout)" -ForegroundColor Cyan
+            Return $false
+        }
+        
+        $result = Receive-Job $job
+        Remove-Job $job
+        
+        if ($result -and $result.Count -gt 2) {
+            Write-Warning "WSL is Enabled. This may interferre with GPU-P and produce an error 43 in the VM"
+            Write-Host "Completed checking if WSL is enabled" -ForegroundColor Cyan
+            Return $true
+        } else {
+            Write-Host "WSL is not enabled or no distribution installed" -ForegroundColor Cyan
+            Write-Host "Completed checking if WSL is enabled" -ForegroundColor Cyan
+            Return $false
+        }
+    } catch {
+        Write-Warning "Error checking WSL: $_"
+        Write-Host "Completed checking if WSL is enabled (with error)" -ForegroundColor Cyan
+        Return $false
     }
 }
 #========================================================================
